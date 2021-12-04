@@ -48,9 +48,16 @@ def calculate_time_and_score(numbers, board):
 
     # create binary matrix for checking win
     bit_board = np.zeros((5,5))
+    sum = np.sum(board)
 
     for t in range(len(numbers)):
         curr_num = numbers[t]
+        if curr_num in positions:
+            p = positions[curr_num]
+            bit_board[p.first, p.second] = 1.0
+            sum -= curr_num
+            if is_win(bit_board):
+                return t, sum*curr_num
 
     return 10000, 0
 
