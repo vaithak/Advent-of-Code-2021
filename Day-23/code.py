@@ -2,268 +2,184 @@ import copy
 import heapq
 from typing import Dict, Any, Tuple, List
 
-Position = Dict[str, Any]
+Position = Tuple[int, int]
 
 RECURSION_LEVEL = 0
 INFINITY = 1e5
 ROOMS_NUM = 4
 GATEWAY_SLOTS = 3 + 2*ROOMS_NUM
-ROOM_SLOTS = 2
+# ROOM_SLOTS = 2
+ROOM_SLOTS = 4
 
 LOCATION_GATEWAY = 0
-LOCATION_ROOM = 1
 
 # starting config of each room. Each room is filled from bottom to top.
-START_ROOMS = [['C', 'D'], ['C', 'B'], ['A', 'D'], ['B', 'A']]
+# START_ROOMS = [['C', 'D'], ['C', 'B'], ['A', 'D'], ['B', 'A']]
+START_ROOMS = [['C', 'D', 'D', 'D'], ['C', 'B', 'C', 'B'], ['A', 'A', 'B', 'D'], ['B', 'C', 'A', 'A']]
+START_ROOMS = [['A', 'D', 'D', 'B'], ['D', 'B', 'C', 'C'], ['C', 'A', 'B', 'B'], ['A', 'C', 'A', 'D']]
 # START_ROOMS = [['A', 'B'], ['D', 'C'], ['C', 'B'], ['A', 'D']]
-# START_ROOMS = [['A', 'B'], ['B', 'A'], ['C', 'C'], ['B', 'A']]
+# START_ROOMS = [['A', 'B'], ['B', 'A'], ['C', 'C']]
 
-################################################################################
-class Amphipod:
-    def __init__(self, type_char: str, position: Position, is_done: bool):
-        self.type_num = ord(type_char) - ord('A')
-        self.move_energy = 10**self.type_num
-        self.position = position
-        self.is_done = is_done
-        self.energy = 0
-    
-    def __str__(self):
-        return f"type_num: {self.type_num}"
+type_char_energy_map = {
+    'A': 1,
+    'B': 10,
+    'C': 100,
+    'D': 1000,
+}
 
-    # move is a tuple of positions, specifying from and to. Returns the energy diff because of this move.
-    def make_move(self, move: Tuple[Position, Position], steps: int):
-        assert self.position == move[0]
-        energy_diff = self.move_energy*steps
-        self.energy += energy_diff
-        self.position = move[1]
-        return energy_diff
+def type_char_to_num(ch):
+    return ord(ch) - ord('A')
 
-    # Returns the energy diff because of undoing this move (will be negative).
-    def undo_move(self, last_move: Tuple[Position, Position], steps: int):
-        assert last_move[1] == self.position
-        energy_diff = self.move_energy*steps
-        self.energy -= energy_diff
-        self.position = last_move[0]
-        return energy_diff
-
-################################################################################  
-class Room:
-    def __init__(self, num: int):
-        self.room_num = num
-        self.slots = [None]*ROOM_SLOTS # each slot either contains an Amphipod or is None (empty).
-    
-    # returns the lowest empty slot where it's amphipod can move to. All the slots below it must be
-    # already filled by the amphipods of type same as room number.
-    def lowest_empty_slot(self):
-        for i in range(ROOM_SLOTS):
-            if self.slots[i] is None:
-                return i
-            elif self.slots[i].type_num != self.room_num:
-                return None
-        return None
-
-    def gateway_slot_above_room(room_num):
-        return 2 + 2*room_num
-
-    def fill_slot(self, i, amphipod):
-        assert self.slots[i] is None
-        self.slots[i] = amphipod
-
-    def empty_slot(self, i):
-        assert self.slots[i] is not None
-        self.slots[i] = None
+def gateway_slot_above_room(room_num):
+    return 2 + 2*room_num
 
 ################################################################################
 class Game:
-    def __init__(self, amphipods: Amphipod, rooms: List[Room]):
-        self.amphipods = amphipods
-        self.rooms = rooms
-        self.gateway = [None]*GATEWAY_SLOTS # each slot either contains an Amphipod or is None (empty).
+    def __init__(self, area_map):
+        # self.amphipods = amphipods
+        assert len(area_map) == ROOMS_NUM+1
+        self.area_map = area_map    # area_map contains Gateway as the first list and rooms from index = 1.
         self.energy_used = 0
-        self.remaining_amphipods = 0
-        self.cache = {}
-        for amphipod in self.amphipods:
-            if amphipod.is_done == False:
-                self.remaining_amphipods += 1
 
-    def is_finished(self):
-        return self.remaining_amphipods == 0
+    def __str__(self):
+        s = ['\n', '#']
+        s.append(''.join(self.area_map[LOCATION_GATEWAY]))
+        s.append('#\n')
+        for slot_idx in range(ROOM_SLOTS-1, -1, -1):
+            if slot_idx == ROOM_SLOTS-1:
+                s.append("###")
+            else:
+                s.append("  #")
+            for location in range(1, ROOMS_NUM+1):
+                s.append(self.area_map[location][slot_idx])
+                s.append("#")
+            if slot_idx == ROOM_SLOTS-1:
+                s.append("##")
+            s.append("\n")
+        s.append("  " + '#'*(2*ROOMS_NUM+1))
+        return ''.join(s)
+
+
+    def get_amphipods(self) -> List[Tuple[int, int]]:
+        amphipods = []
+        for i in range(ROOMS_NUM+1):
+            for j in range(len(self.area_map[i])):
+                if self.area_map[i][j] != '.':
+                    amphipods.append((i, j))
+        return amphipods
+
+    def lowest_empty_slot(self, room_num):
+        room = self.area_map[room_num+1]
+        for i in range(ROOM_SLOTS):
+            if room[i] == '.':
+                return i
+            elif type_char_to_num(room[i]) != room_num:
+                return None
+        return None
+
+    def is_finished(self) -> bool:
+        for room_num in range(1, ROOMS_NUM+1):
+            for slot_idx in range(ROOM_SLOTS):
+                if type_char_to_num(self.area_map[room_num][slot_idx]) != (room_num-1):
+                    return False
+        return True
+
+    def is_done(self, amphipod: Tuple[int, int]) -> bool:
+        room_num, idx = amphipod
+        if room_num == LOCATION_GATEWAY:
+            return False
+        if type_char_to_num(self.area_map[room_num][idx]) != (room_num-1):
+            return False
+        for i in range(idx):
+            if type_char_to_num(self.area_map[room_num][i]) != (room_num-1):
+                return False
+        return True
 
     # checks if move is possible and return number of steps if possible.
-    def is_possible_move_and_steps(self, move: Tuple[Amphipod, Position, Position]) -> Tuple[int, bool]:
-        amphipod, source, target = move
-        if amphipod.is_done:
-            return -1, False
+    def is_possible_move_and_steps(self, move: Tuple[Position, Position]) -> Tuple[int, bool]:
+        source, target = move
         num_steps = 0
         # check no obstacle in up.
         gateway_start_slot = -1
-        if source['location'] == LOCATION_ROOM:
-            curr_room_num, curr_room_slot = source['coords']
+        if source[0] != LOCATION_GATEWAY:   # means a room.
+            curr_location, curr_room_slot = source
+            curr_room_num = curr_location-1
             for slot_idx in range(curr_room_slot+1, ROOM_SLOTS):
-                if self.rooms[curr_room_num].slots[slot_idx] is not None:
+                if self.area_map[curr_location][slot_idx] != '.':
                     return -1, False
-            gateway_start_slot = Room.gateway_slot_above_room(curr_room_num)
-            if self.gateway[gateway_start_slot] is not None:
+            gateway_start_slot = gateway_slot_above_room(curr_room_num)
+            if self.area_map[LOCATION_GATEWAY][gateway_start_slot] != '.':
                 return -1, False
             num_steps += ROOM_SLOTS - curr_room_slot
         else:
-            gateway_start_slot = source['coords'][1]
+            gateway_start_slot = source[1]
         # check no obstacle down.
         gateway_end_slot = -1
-        if target['location'] == LOCATION_ROOM:
-            end_room_num, end_room_slot = target['coords']
-            gateway_end_slot = Room.gateway_slot_above_room(end_room_num)
+        if target[0] != LOCATION_GATEWAY:
+            end_location, end_room_slot = target
+            end_room_num = end_location-1
+            gateway_end_slot = gateway_slot_above_room(end_room_num)
             for slot_idx in range(ROOM_SLOTS-1, end_room_slot-1, -1):
-                if self.rooms[end_room_num].slots[slot_idx] is not None:
+                if self.area_map[end_location][slot_idx] != '.':
                     return -1, False
             num_steps += ROOM_SLOTS - end_room_slot
         else:
-            gateway_end_slot = target['coords'][1]
+            gateway_end_slot = target[1]
         # check no obstacle horizontal.
         if gateway_start_slot < gateway_end_slot:
             for idx in range(gateway_start_slot+1, gateway_end_slot+1):
-                if self.gateway[idx] is not None:
+                if self.area_map[LOCATION_GATEWAY][idx] != '.':
                     return -1, False
                 num_steps += 1
         elif gateway_start_slot > gateway_end_slot:
             for idx in range(gateway_start_slot-1, gateway_end_slot-1, -1):
-                if self.gateway[idx] is not None:
+                if self.area_map[LOCATION_GATEWAY][idx] != '.':
                     return -1, False
                 num_steps += 1
         return num_steps, True
     
-    def possible_moves(self) -> List[Tuple[Tuple[Amphipod, Position, Position], int]]:
+    def possible_moves(self) -> List[Tuple[Tuple[Position, Position], int]]:
         moves = []
-        for amphipod in self.amphipods:
-            if not amphipod.is_done:
+        for amphipod_pos in self.get_amphipods():
+            if not self.is_done(amphipod_pos):
+                location, idx = amphipod_pos
+                target_room_num = type_char_to_num(self.area_map[location][idx])
                 # check if can move to it's room.
-                guess_slot = self.rooms[amphipod.type_num].lowest_empty_slot()
+                guess_slot = self.lowest_empty_slot(target_room_num)
                 if guess_slot is not None:
-                    to_position = {
-                        'location': LOCATION_ROOM,
-                        'coords': (amphipod.type_num, guess_slot),
-                    }
-                    move = (amphipod, amphipod.position, to_position)
+                    to_position = (target_room_num+1, guess_slot)
+                    move = (amphipod_pos, to_position)
                     steps, possible = self.is_possible_move_and_steps(move)
                     if possible:
-                        # moves.append((move, steps))
-                        # continue
-                        # print(move)
                         return [(move, steps)]
                 # otherwise can only move to some place in Gateway.
-                if amphipod.position['location'] == LOCATION_ROOM:
+                if location != LOCATION_GATEWAY:
                     for i in range(GATEWAY_SLOTS):
-                        if self.gateway[i] is None:
-                            to_position = {
-                                'location': LOCATION_GATEWAY,
-                                'coords': (-1, i),
-                            }
-                            move = (amphipod, amphipod.position, to_position)
+                        if self.area_map[LOCATION_GATEWAY][i] == '.':
+                            to_position = (LOCATION_GATEWAY, i)
+                            move = (amphipod_pos, to_position)
                             steps, possible = self.is_possible_move_and_steps(move)
                             if possible:
                                 moves.append((move, steps))
         return moves
 
-    def make_move(self, move: Tuple[Amphipod, Position, Position], steps: int):
-        amphipod, from_pos, to_pos = move
-        self.energy_used += amphipod.make_move((from_pos, to_pos), steps)
-        # make changes for from_pos.
-        if from_pos['location'] == LOCATION_ROOM:
-            room_num, room_slot = from_pos['coords']
-            self.rooms[room_num].empty_slot(room_slot)
-        else:
-            gateway_slot = from_pos['coords'][1]
-            self.gateway[gateway_slot] = None
+    def make_move(self, move: Tuple[Position, Position], steps: int):
+        from_pos, to_pos = move
+        to_location, to_idx = to_pos
+        from_location, from_idx = from_pos
+        amphipod_char = self.area_map[from_location][from_idx]
+        self.energy_used += type_char_energy_map[amphipod_char]*steps
         # make changes for to_pos.
-        if to_pos['location'] == LOCATION_ROOM:
-            room_num, room_slot = to_pos['coords']
-            self.rooms[room_num].fill_slot(room_slot, amphipod)
-            amphipod.is_done = True
-            self.remaining_amphipods -= 1
-        else:
-            gateway_slot = to_pos['coords'][1]
-            self.gateway[gateway_slot] = amphipod
-
-    def undo_move(self, move: Tuple[Amphipod, Position, Position], steps: int):
-        amphipod, from_pos, to_pos = move
-        self.energy_used -= amphipod.undo_move((from_pos, to_pos), steps)
+        self.area_map[to_location][to_idx] = amphipod_char
         # make changes for from_pos.
-        if from_pos['location'] == LOCATION_ROOM:
-            room_num, room_slot = from_pos['coords']
-            self.rooms[room_num].fill_slot(room_slot, amphipod)
-        else:
-            gateway_slot = from_pos['coords'][1]
-            self.gateway[gateway_slot] = amphipod
-        # make changes for to_pos.
-        if to_pos['location'] == LOCATION_ROOM:
-            room_num, room_slot = to_pos['coords']
-            assert room_num == amphipod.type_num
-            self.rooms[room_num].empty_slot(room_slot)
-            amphipod.is_done = False
-            self.remaining_amphipods += 1
-        else:
-            gateway_slot = to_pos['coords'][1]
-            self.gateway[gateway_slot] = None
+        self.area_map[from_location][from_idx] = '.'
 
     def state(self):
-        s = ['\n', '#']
-        for gateway_idx in range(GATEWAY_SLOTS):
-            if self.gateway[gateway_idx] is None:
-                s.append('.')
-            else:
-                s.append(str(self.gateway[gateway_idx].type_num))
-        s.append("#")
-        for slot_idx in range(ROOM_SLOTS-1, -1, -1):
-            s.append("\n")
-            s.append("#"); s.append("#"); s.append("#")
-            for room_idx in range(ROOMS_NUM):
-                if self.rooms[room_idx].slots[slot_idx] is None:
-                    s.append('.')
-                else:
-                    s.append(str(self.rooms[room_idx].slots[slot_idx].type_num))
-                s.append('#')
-            s.append("#"); s.append("#")
-        return ''.join(s)
+        return ''.join([''.join(x) for x in self.area_map])
 
     # override the comparison operator
     def __lt__(self, nxt) -> bool:
         return self.energy_used < nxt.energy_used
-
-    def find_solution(self, upper_bound_energy=INFINITY) -> Tuple[int, bool]:
-        pass
-        ################################
-        # global RECURSION_LEVEL
-        # if RECURSION_LEVEL % 40 == 0:
-        #     print(RECURSION_LEVEL, end=',')
-        # RECURSION_LEVEL += 1
-        # if RECURSION_LEVEL % 1000 == 0:
-        #     print()
-        ################################
-        # if upper_bound_energy < 0:      return -1, False
-        # if self.is_finished():          return  0, True
-        # curr_state = self.state()
-        # if curr_state in self.cache:
-        #     if self.cache[curr_state][0] <= upper_bound_energy:
-        #         return self.cache[curr_state]
-        #     else:
-        #         return -1, False
-        # # print("reached")
-        # # try more moves.
-        # possible_moves = self.possible_moves()
-        # if len(possible_moves) == 0:    return -1, False
-        # status = False
-        # for move, steps in possible_moves:
-        #     # print(curr_state, move[0], move[1], move[2], steps)
-        #     # print()
-        #     self.make_move(move, steps)
-        #     curr_res, curr_status = self.find_solution(upper_bound_energy-energy)
-        #     status = status or curr_status
-        #     if (curr_status == True):
-        #         upper_bound_energy = curr_res + energy
-        #     self.undo_move(move, steps)
-        # if status:
-        #     self.cache[curr_state] = upper_bound_energy, status
-        # return upper_bound_energy, status
 
 ################################################################################
 # Djikstra's algorithm
@@ -271,57 +187,34 @@ def djikstra(start_game: Game) -> int:
     heap = []
     heapq.heappush(heap, start_game)
     visited = {}
+    values = {}
     while len(heap) > 0:
         curr_game = heapq.heappop(heap)
+        curr_state = curr_game.state()
+        if curr_state in visited:
+            continue
+        visited[curr_state] = True
         if curr_game.is_finished():
             return curr_game.energy_used
-        visited[curr_game.state()] = True
         # try more moves.
         possible_moves = curr_game.possible_moves()
         if len(possible_moves) == 0:
             continue
         for move, steps in possible_moves:
             new_game = copy.deepcopy(curr_game)
-            print(curr_game.state())
             new_game.make_move(move, steps)
-            print(curr_game.state())
-            print(new_game.state())
-            if new_game.state() in visited:
-                continue
-            heapq.heappush(heap, new_game)
+            new_state = new_game.state()
+            if (new_state not in values) or (values[new_state] > new_game.energy_used):
+                values[new_state] = new_game.energy_used
+                heapq.heappush(heap, new_game)
     return None
 
 ################################################################################
 # Parse starting positions and create Game.
-amphipods = []
-rooms_with_amphipods = [Room(i) for i in range(ROOMS_NUM)]
-for room_num in range(ROOMS_NUM):
-    for slot_num in range(ROOM_SLOTS):
-        type_char = START_ROOMS[room_num][slot_num]
-        curr_amphipod = Amphipod(
-            type_char, 
-            position={
-                'location': LOCATION_ROOM,
-                'coords': (room_num, slot_num),
-            },
-            is_done=False
-        )
-        # check if these amphipod is already in right place.
-        is_done = (curr_amphipod.type_num == room_num)
-        if slot_num != 0:
-            is_done = is_done and rooms_with_amphipods[room_num].slots[slot_num-1].is_done
-        curr_amphipod.is_done = is_done
-        # add amphipod to room and array.
-        rooms_with_amphipods[room_num].fill_slot(slot_num, curr_amphipod)
-        amphipods.append(curr_amphipod)
-
-start_game = Game(amphipods, rooms_with_amphipods)
+area_map = [['.']*GATEWAY_SLOTS]
+area_map.extend(START_ROOMS)
+start_game = Game(area_map)
+print(start_game)
+# print(start_game.possible_moves())
 res = djikstra(start_game)
 print(res)
-# print(game.state())
-# res, status = game.find_solution()
-# if status == True:
-#     print(f"\tTotal energy used: {res}")
-# else:
-#     print("\tOops!!! No solution found")
-# print(game.cache["\n#...1.......#\n###1#2#.#3###\n###0#3#2#0###"])
