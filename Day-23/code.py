@@ -16,9 +16,6 @@ LOCATION_GATEWAY = 0
 # starting config of each room. Each room is filled from bottom to top.
 # START_ROOMS = [['C', 'D'], ['C', 'B'], ['A', 'D'], ['B', 'A']]
 START_ROOMS = [['C', 'D', 'D', 'D'], ['C', 'B', 'C', 'B'], ['A', 'A', 'B', 'D'], ['B', 'C', 'A', 'A']]
-START_ROOMS = [['A', 'D', 'D', 'B'], ['D', 'B', 'C', 'C'], ['C', 'A', 'B', 'B'], ['A', 'C', 'A', 'D']]
-# START_ROOMS = [['A', 'B'], ['D', 'C'], ['C', 'B'], ['A', 'D']]
-# START_ROOMS = [['A', 'B'], ['B', 'A'], ['C', 'C']]
 
 type_char_energy_map = {
     'A': 1,
@@ -29,6 +26,13 @@ type_char_energy_map = {
 
 def type_char_to_num(ch):
     return ord(ch) - ord('A')
+
+def is_above_room(gateway_slot):
+    if gateway_slot < 2 or gateway_slot > GATEWAY_SLOTS-2:
+        return False
+    if gateway_slot%2 == 1:
+        return False
+    return True
 
 def gateway_slot_above_room(room_num):
     return 2 + 2*room_num
@@ -119,9 +123,6 @@ class Game:
             end_location, end_room_slot = target
             end_room_num = end_location-1
             gateway_end_slot = gateway_slot_above_room(end_room_num)
-            for slot_idx in range(ROOM_SLOTS-1, end_room_slot-1, -1):
-                if self.area_map[end_location][slot_idx] != '.':
-                    return -1, False
             num_steps += ROOM_SLOTS - end_room_slot
         else:
             gateway_end_slot = target[1]
@@ -154,13 +155,28 @@ class Game:
                         return [(move, steps)]
                 # otherwise can only move to some place in Gateway.
                 if location != LOCATION_GATEWAY:
-                    for i in range(GATEWAY_SLOTS):
-                        if self.area_map[LOCATION_GATEWAY][i] == '.':
-                            to_position = (LOCATION_GATEWAY, i)
-                            move = (amphipod_pos, to_position)
-                            steps, possible = self.is_possible_move_and_steps(move)
-                            if possible:
-                                moves.append((move, steps))
+                    gateway_slot = gateway_slot_above_room(location-1)
+                    temp_to_position = (LOCATION_GATEWAY, gateway_slot)
+                    steps, possible = self.is_possible_move_and_steps((amphipod_pos, temp_to_position))
+                    if possible:
+                        left_steps = steps
+                        for i in range(gateway_slot-1, -1, -1):
+                            if self.area_map[LOCATION_GATEWAY][i] != '.':
+                                break
+                            left_steps += 1
+                            if is_above_room(i):
+                                continue
+                            temp_to_position = (LOCATION_GATEWAY, i)
+                            moves.append(((amphipod_pos, temp_to_position), left_steps))
+                        right_steps = steps
+                        for i in range(gateway_slot+1, GATEWAY_SLOTS):
+                            if self.area_map[LOCATION_GATEWAY][i] != '.':
+                                break
+                            right_steps += 1
+                            if is_above_room(i):
+                                continue
+                            temp_to_position = (LOCATION_GATEWAY, i)
+                            moves.append(((amphipod_pos, temp_to_position), right_steps))
         return moves
 
     def make_move(self, move: Tuple[Position, Position], steps: int):
@@ -181,6 +197,14 @@ class Game:
     def __lt__(self, nxt) -> bool:
         return self.energy_used < nxt.energy_used
 
+def make_new_game(A: Game) -> Game:
+    new_area_map = []
+    for state in A.area_map:
+        new_area_map.append(state.copy())
+    B = Game(new_area_map)
+    B.energy_used = A.energy_used
+    return B
+
 ################################################################################
 # Djikstra's algorithm
 def djikstra(start_game: Game) -> int:
@@ -195,13 +219,13 @@ def djikstra(start_game: Game) -> int:
             continue
         visited[curr_state] = True
         if curr_game.is_finished():
-            return curr_game.energy_used
+            return values[curr_state]
         # try more moves.
         possible_moves = curr_game.possible_moves()
         if len(possible_moves) == 0:
             continue
         for move, steps in possible_moves:
-            new_game = copy.deepcopy(curr_game)
+            new_game = make_new_game(curr_game)
             new_game.make_move(move, steps)
             new_state = new_game.state()
             if (new_state not in values) or (values[new_state] > new_game.energy_used):
@@ -215,6 +239,5 @@ area_map = [['.']*GATEWAY_SLOTS]
 area_map.extend(START_ROOMS)
 start_game = Game(area_map)
 print(start_game)
-# print(start_game.possible_moves())
 res = djikstra(start_game)
 print(res)
